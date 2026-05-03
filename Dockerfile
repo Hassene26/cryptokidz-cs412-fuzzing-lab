@@ -33,18 +33,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-dev \
     python3-pip \
+    python3-setuptools \
     libgd-dev \
     zlib1g-dev \
     gnuplot \
     qemu-user \
+    ninja-build \
+    meson \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    bison \
+    flex \
     ca-certificates \
     patch \
     && rm -rf /var/lib/apt/lists/*
 
-# Build AFL++ from source (distrib target builds all helpers incl. afl-clang-fast and qemu_mode)
+# Build AFL++ from source.
+# `make distrib` builds afl-clang-fast (LLVM mode), gcc_plugin mode, and the core tools,
+# but NOT qemu_mode — that has its own build script. We invoke both, then `make install`.
 RUN git clone https://github.com/AFLplusplus/AFLplusplus /AFLplusplus \
     && cd /AFLplusplus \
     && make distrib \
+    && cd qemu_mode \
+    && ./build_qemu_support.sh \
+    && cd .. \
     && make install
 
 # Fetch and unpack libpng 1.2.56
@@ -56,12 +69,20 @@ RUN wget -q https://download.sourceforge.net/libpng/libpng-1.2.56.tar.gz -O /tmp
 COPY patches/ /patches/
 
 # Disable PNG CRC checks so the fuzzer is not blocked by checksum mismatches on mutated inputs.
-# We try the AFL++-provided patch first; if it does not apply cleanly, fall back manually.
-# MANUAL FALLBACK: edit /libpng-1.2.56/pngrutil.c and insert `return 0;` as the very first
-# statement of png_crc_finish() so CRC verification always succeeds.
+# Try the AFL++-provided patch first. If it fails (e.g. upstream patch drift), fall back to
+# injecting `return 0;` at the top of png_crc_finish() in pngrutil.c via sed. The build then
+# verifies the patch landed (greps for the inserted marker) and fails loudly if neither
+# strategy worked, instead of silently building a CRC-checking libpng.
 RUN cd /libpng-1.2.56 \
-    && (patch -p0 < /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch \
-    || echo "WARNING: CRC patch failed - apply manual fallback (see Dockerfile comment)")
+    && ( patch -p0 < /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch \
+    && echo "[+] CRC patch applied via AFL++ patch" \
+    ) \
+    || ( echo "[!] AFL++ CRC patch failed, applying sed fallback" \
+    && sed -i 's|^\(png_crc_finish\)\(.*\)$|\1\2\n   return 0; /* AFL++ CRC bypass */|' pngrutil.c \
+    && grep -q "AFL++ CRC bypass" pngrutil.c \
+    && echo "[+] CRC patch applied via sed fallback" \
+    ) \
+    || ( echo "[X] CRC patch FAILED — neither method worked, aborting build"; exit 1 )
 
 # --- Instrumented build: used by afl-fuzz (no -Q). Static, ASan-enabled. ---
 # --disable-shared so the harness statically links libpng and AFL coverage covers it.
