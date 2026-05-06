@@ -105,8 +105,9 @@ RUN cd /libpng-1.2.56 \
     && make -j"$(nproc)" \
     && make install
 
-# Harness sources (written by teammate) and seed corpus
+# Harness sources, seed corpus and Makefile
 COPY src/   /src/
 COPY seeds/ /seeds/
+COPY Makefile /Makefile
 
 WORKDIR /
