@@ -95,6 +95,19 @@ RUN cd /libpng-1.2.56 \
     && make -j"$(nproc)" \
     && make install
 
+# --- Instrumented-but-no-ASan build: used by Q8 config 1 (no sanitizer + fork). ---
+# AFL coverage instrumentation is still in (afl-clang-fast), but no ASan symbols,
+# so the noasan harness links cleanly. This is what makes Q8's comparison fair:
+# only the sanitizer differs vs the ASan build, not the AFL instrumentation.
+RUN cd /libpng-1.2.56 \
+    && make distclean \
+    && CC=afl-clang-fast \
+    CXX=afl-clang-fast++ \
+    CFLAGS="-g -O1" \
+    ./configure --disable-shared --prefix=/libpng-1.2.56/install_noasan \
+    && make -j"$(nproc)" \
+    && make install
+
 # --- Vanilla build: used by afl-fuzz -Q (QEMU mode). No instrumentation, no sanitizers. ---
 # distclean wipes the previous build artifacts so the two trees do not contaminate each other.
 RUN cd /libpng-1.2.56 \

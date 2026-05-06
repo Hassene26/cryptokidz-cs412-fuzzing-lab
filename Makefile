@@ -1,11 +1,12 @@
 # CS-412 Fuzzing Lab — runs INSIDE the Docker container.
-# Targets: build, fuzz, fuzz-qemu, plot, clean.
+# Targets: build, fuzz, fuzz-persistent, fuzz-qemu, plot, clean.
 
-.PHONY: build fuzz fuzz-qemu plot clean
+.PHONY: build fuzz fuzz-persistent fuzz-qemu plot clean
 
-# Build three harness binaries:
-#   /png_fuzz             -> instrumented (afl-clang-fast + ASan) for normal afl-fuzz
-#   /png_fuzz_persistent  -> same toolchain, persistent-mode harness (much faster execs/sec)
+# Build four harness binaries:
+#   /png_fuzz             -> instrumented (afl-clang-fast) + ASan, fork mode
+#   /png_fuzz_noasan      -> instrumented (afl-clang-fast), NO sanitizer, fork mode
+#   /png_fuzz_persistent  -> instrumented + ASan, persistent-mode harness
 #   /png_fuzz_qemu        -> vanilla gcc build, links the non-instrumented libpng,
 #                            used with afl-fuzz -Q (QEMU black-box mode)
 build:
@@ -15,6 +16,12 @@ build:
 	    -lpng12 -lz -lm \
 	    -fsanitize=address -g -O1 \
 	    -o /png_fuzz
+	afl-clang-fast /src/harness.c \
+	    -I/libpng-1.2.56/install_noasan/include \
+	    -L/libpng-1.2.56/install_noasan/lib \
+	    -lpng12 -lz -lm \
+	    -g -O1 \
+	    -o /png_fuzz_noasan
 	afl-clang-fast /src/harness_persistent.c \
 	    -I/libpng-1.2.56/install/include \
 	    -L/libpng-1.2.56/install/lib \
@@ -28,17 +35,32 @@ build:
 	    -g -O1 \
 	    -o /png_fuzz_qemu
 
-# Instrumented campaign. -x feeds the PNG dictionary shipped with AFL++ for smarter mutations.
+# AFL_SKIP_CPUFREQ=1 is set on every fuzz target so the Makefile works on Docker
+# Desktop / macOS / any host where /sys/devices/system/cpu/.../scaling_governor
+# is not writable. Without it afl-fuzz refuses to start.
+
+# Instrumented campaign. -x feeds the PNG dictionary shipped with AFL++.
 fuzz:
 	mkdir -p /findings
-	afl-fuzz -i /seeds -o /findings \
+	AFL_SKIP_CPUFREQ=1 afl-fuzz -i /seeds -o /findings \
 	    -x /AFLplusplus/dictionaries/png.dict \
 	    -- /png_fuzz @@
+
+# Persistent-mode campaign — used to demonstrate Q8's exec-speed gain over fork mode.
+# Persistent harnesses read input from stdin / shared memory via __AFL_LOOP, NOT
+# from a file path, so we drop the trailing `@@`.
+# -V 60 caps the run at 60 seconds, enough to compare execs/sec against fork mode.
+fuzz-persistent:
+	mkdir -p /findings-persistent
+	AFL_SKIP_CPUFREQ=1 afl-fuzz -i /seeds -o /findings-persistent \
+	    -x /AFLplusplus/dictionaries/png.dict \
+	    -V 60 \
+	    -- /png_fuzz_persistent
 
 # QEMU campaign — works on the non-instrumented binary via dynamic translation.
 fuzz-qemu:
 	mkdir -p /findings-qemu
-	afl-fuzz -Q -i /seeds -o /findings-qemu \
+	AFL_SKIP_CPUFREQ=1 afl-fuzz -Q -i /seeds -o /findings-qemu \
 	    -x /AFLplusplus/dictionaries/png.dict \
 	    -- /png_fuzz_qemu @@
 
@@ -48,5 +70,6 @@ plot:
 	afl-plot /findings-qemu/default/ /plot_output_qemu/
 
 clean:
-	rm -f /png_fuzz /png_fuzz_persistent /png_fuzz_qemu
-	rm -rf /findings /findings-qemu /plot_output /plot_output_qemu
+	rm -f /png_fuzz /png_fuzz_noasan /png_fuzz_persistent /png_fuzz_qemu
+	rm -rf /findings /findings-persistent /findings-qemu \
+	       /plot_output /plot_output_qemu
