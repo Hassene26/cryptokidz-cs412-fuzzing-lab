@@ -58,6 +58,18 @@ int main(int argc, char **argv)
     png_init_io(png, fp);
     png_read_info(png, info);
 
+    /* Dimension guard. Done immediately after png_read_info (before any
+     * png_set_* / png_read_update_info) so we fail fast on absurd headers
+     * without triggering libpng's internal per-row allocations. */
+    png_uint_32 w = png_get_image_width(png, info);
+    png_uint_32 h = png_get_image_height(png, info);
+    if (w == 0 || h == 0 || w > 4096 || h > 4096)
+    {
+        png_destroy_read_struct(&png, &info, NULL);
+        fclose(fp);
+        return 0;
+    }
+
     /* Enable transformations to maximize coverage. Each one activates
      * additional code paths inside libpng:
      *   - set_expand:       palette/tRNS/sub-byte-gray expansion
@@ -69,17 +81,8 @@ int main(int argc, char **argv)
     png_set_gray_to_rgb(png);
     png_read_update_info(png, info);
 
-    /* Guard against absurd dimensions. */
-    png_uint_32 w = png_get_image_width(png, info);
-    png_uint_32 h = png_get_image_height(png, info);
-    if (w == 0 || h == 0 || w > 4096 || h > 4096)
-    {
-        png_destroy_read_struct(&png, &info, NULL);
-        fclose(fp);
-        return 0;
-    }
-
-    /* Allocate one buffer per scanline. */
+    /* Allocate one buffer per scanline. rowbytes must be read AFTER
+     * png_read_update_info because the transforms change the row size. */
     png_bytep *rows = malloc(sizeof(png_bytep) * h);
     size_t rowbytes = png_get_rowbytes(png, info);
     for (png_uint_32 i = 0; i < h; i++)
