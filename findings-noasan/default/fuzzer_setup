@@ -1,0 +1,7 @@
+# environment variables:
+AFL_CUSTOM_INFO_PROGRAM=/png_fuzz_noasan
+AFL_CUSTOM_INFO_PROGRAM_ARGV=@@
+AFL_CUSTOM_INFO_OUT=/findings-noasan/default
+AFL_SKIP_CPUFREQ=1
+# command line:
+'afl-fuzz' '-i' '/seeds' '-o' '/findings-noasan' '-x' '/AFLplusplus/dictionaries/png.dict' '-V' '60' '--' '/png_fuzz_noasan' '@@'
